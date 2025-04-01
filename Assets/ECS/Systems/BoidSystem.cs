@@ -12,6 +12,7 @@ public partial struct BoidSystem : ISystem
         state.RequireForUpdate<SpawnerComponent>();
     }
 
+    [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
         float deltaTime = SystemAPI.Time.DeltaTime;
