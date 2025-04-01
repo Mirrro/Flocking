@@ -45,10 +45,10 @@ public partial struct SpawnerSystem : ISystem
                     separationWeight = 1.5f,
                     alignmentWeight = 1.0f,
                     cohesionWeight = 1.0f,
-                    wanderWeight = 3.0f,
-                    homeAttractionWeight = .1f,
-                    neighborRadius = 5f,
-                    maxSpeed = 1f
+                    wanderWeight = 1.0f,
+                    homeAttractionWeight = 1f,
+                    neighborRadius = .5f,
+                    maxSpeed = UnityEngine.Random.Range(1, 1.4f)
                 });
 
                 ecb.SetComponent(newBoid, LocalTransform.FromPosition(
