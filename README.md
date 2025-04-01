@@ -1,7 +1,5 @@
 # Flocking Behaviour in ECS:
 
 
-
-
-https://github.com/user-attachments/assets/57fa365c-716c-4a32-9e4d-8d014d80d2b8
+https://github.com/user-attachments/assets/e3e0684a-0a4f-45c1-961a-8f0a5abcd802
 
