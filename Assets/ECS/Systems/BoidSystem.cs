@@ -1,6 +1,8 @@
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
+using Unity.Mathematics;
 using Unity.Transforms;
 
 [BurstCompile]
@@ -15,6 +17,7 @@ public partial struct BoidSystem : ISystem
     public void OnUpdate(ref SystemState state)
     {
         float deltaTime = SystemAPI.Time.DeltaTime;
+        float cellSize = .1f;
 
         Entity spawnerEntity = SystemAPI.GetSingletonEntity<SpawnerComponent>();
         SpawnerComponent spawner = SystemAPI.GetComponent<SpawnerComponent>(spawnerEntity);
@@ -23,31 +26,81 @@ public partial struct BoidSystem : ISystem
             .WithAll<BoidComponent, LocalTransform>()
             .Build();
 
+        var entities = query.ToEntityArray(Allocator.TempJob);
+        var transforms = query.ToComponentDataArray<LocalTransform>(Allocator.TempJob);
         var boidComponents = query.ToComponentDataArray<BoidComponent>(Allocator.TempJob);
-        var boidTransforms = query.ToComponentDataArray<LocalTransform>(Allocator.TempJob);
 
-        int boidCount = boidComponents.Length;
-        var randomArray = new NativeArray<Unity.Mathematics.Random>(boidCount, Allocator.TempJob);
-
-        uint seed = (uint)(SystemAPI.Time.ElapsedTime * 1000);
-        for (int i = 0; i < boidCount; i++)
+        var entityToIndexMap = new NativeHashMap<Entity, int>(entities.Length, Allocator.TempJob);
+        for (int i = 0; i < entities.Length; i++)
         {
-            randomArray[i] = new Unity.Mathematics.Random(seed + (uint)i);
+            entityToIndexMap.TryAdd(entities[i], i);
         }
 
-        var job = new BoidUpdateJob
+        var spatialHashMap = new NativeParallelMultiHashMap<int, Entity>(entities.Length, Allocator.TempJob);
+
+        var buildHashJob = new BuildSpatialHashMapJob
+        {
+            entities = entities,
+            transforms = transforms,
+            spatialHashMap = spatialHashMap.AsParallelWriter(),
+            cellSize = cellSize
+        };
+
+        var buildHandle = buildHashJob.Schedule(entities.Length, 64, state.Dependency);
+
+        var updateJob = new BoidUpdateJob
         {
             deltaTime = deltaTime,
             spawner = spawner,
+            transforms = transforms,
             boidComponents = boidComponents,
-            boidTransforms = boidTransforms,
-            randomArray = randomArray
+            spatialHashMap = spatialHashMap,
+            entityToIndexMap = entityToIndexMap,
+            cellSize = cellSize
         };
 
-        state.Dependency = job.ScheduleParallel(state.Dependency);
+        state.Dependency = updateJob.ScheduleParallel(query, buildHandle);
 
+        entities.Dispose(state.Dependency);
+        transforms.Dispose(state.Dependency);
         boidComponents.Dispose(state.Dependency);
-        boidTransforms.Dispose(state.Dependency);
-        randomArray.Dispose(state.Dependency);
+        spatialHashMap.Dispose(state.Dependency);
+        entityToIndexMap.Dispose(state.Dependency);
+    }
+}
+
+
+[BurstCompile]
+public struct BuildSpatialHashMapJob : IJobParallelFor
+{
+    [ReadOnly] public NativeArray<Entity> entities;
+    [ReadOnly] public NativeArray<LocalTransform> transforms;
+    public NativeParallelMultiHashMap<int, Entity>.ParallelWriter spatialHashMap;
+    public float cellSize;
+
+    public void Execute(int index)
+    {
+        float3 pos = transforms[index].Position;
+        int3 cell = SpatialHash.GridPosition(pos, cellSize);
+        int hash = SpatialHash.Hash(cell);
+
+        spatialHashMap.Add(hash, entities[index]);
+    }
+}
+
+
+public static class SpatialHash
+{
+    public static int3 GridPosition(float3 position, float cellSize)
+    {
+        return (int3)math.floor(position / cellSize);
+    }
+
+    public static int Hash(int3 gridPos)
+    {
+        unchecked
+        {
+            return gridPos.x * 73856093 ^ gridPos.y * 19349663 ^ gridPos.z * 83492791;
+        }
     }
 }

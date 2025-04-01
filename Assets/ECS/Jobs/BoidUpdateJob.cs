@@ -8,12 +8,15 @@ using Unity.Transforms;
 public partial struct BoidUpdateJob : IJobEntity
 {
     public float deltaTime;
+    public float cellSize;
     [ReadOnly] public SpawnerComponent spawner;
-    [ReadOnly] public NativeArray<BoidComponent> boidComponents;
-    [ReadOnly] public NativeArray<LocalTransform> boidTransforms;
-    [NativeDisableParallelForRestriction] public NativeArray<Random> randomArray;
 
-    void Execute(ref BoidComponent boid, ref LocalTransform transform, [EntityIndexInQuery] int index)
+    [ReadOnly] public NativeArray<BoidComponent> boidComponents;
+    [ReadOnly] public NativeArray<LocalTransform> transforms;
+    [ReadOnly] public NativeParallelMultiHashMap<int, Entity> spatialHashMap;
+    [ReadOnly] public NativeHashMap<Entity, int> entityToIndexMap;
+
+    public void Execute(ref BoidComponent boid, ref LocalTransform transform, [EntityIndexInQuery] int index, Entity self)
     {
         float3 position = transform.Position;
         float3 velocity = boid.velocity;
@@ -23,19 +26,36 @@ public partial struct BoidUpdateJob : IJobEntity
         float3 cohesion = float3.zero;
         int neighborCount = 0;
 
-        for (int i = 0; i < boidTransforms.Length; i++)
-        {
-            float3 otherPos = boidTransforms[i].Position;
-            if (math.all(otherPos == position)) continue;
+        int3 myCell = SpatialHash.GridPosition(position, cellSize);
 
-            float dist = math.distance(position, otherPos);
-            if (dist < boid.neighborRadius)
+        for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++)
+        for (int z = -1; z <= 1; z++)
+        {
+            int3 neighborCell = myCell + new int3(x, y, z);
+            int hash = SpatialHash.Hash(neighborCell);
+
+            if (spatialHashMap.TryGetFirstValue(hash, out Entity neighbor, out var it))
             {
-                float3 otherVel = boidComponents[i].velocity;
-                separation += (position - otherPos) / math.max(dist, 0.001f);
-                alignment += otherVel;
-                cohesion += otherPos;
-                neighborCount++;
+                do
+                {
+                    if (neighbor == self || !entityToIndexMap.TryGetValue(neighbor, out int neighborIndex))
+                        continue;
+
+                    float3 otherPos = transforms[neighborIndex].Position;
+                    float3 otherVel = boidComponents[neighborIndex].velocity;
+
+                    float dist = math.distance(position, otherPos);
+                    if (dist < boid.neighborRadius)
+                    {
+                        separation += (position - otherPos) / math.max(dist, 0.001f);
+                        alignment += otherVel;
+                        cohesion += otherPos;
+                        neighborCount++;
+                    }
+
+
+                } while (spatialHashMap.TryGetNextValue(out neighbor, ref it));
             }
         }
 
@@ -45,28 +65,22 @@ public partial struct BoidUpdateJob : IJobEntity
             alignment /= neighborCount;
             cohesion = (cohesion / neighborCount) - position;
         }
-        
-        float3 homeDir = math.normalize(spawner.spawnPosition - position);
-        float distance = math.distance(spawner.spawnPosition, position);
-        float3 homeForce = homeDir * distance;
-        
-        Random rand = randomArray[index];
-        float3 wander = rand.NextFloat3Direction();
 
+        float3 toSpawner = spawner.spawnPosition - position;
+        float3 homeForce = math.normalize(toSpawner) * math.length(toSpawner);
+        float3 wanderDirection = noise.cnoise(position);
         float3 acceleration =
             separation * boid.separationWeight +
             alignment * boid.alignmentWeight +
             cohesion * boid.cohesionWeight +
             homeForce * boid.homeAttractionWeight +
-            wander * boid.wanderWeight;
+            math.normalize(wanderDirection) * boid.wanderWeight;
 
         velocity += acceleration * deltaTime;
 
         float speed = math.length(velocity);
         if (speed > boid.maxSpeed)
-        {
             velocity = math.normalize(velocity) * boid.maxSpeed;
-        }
 
         position += velocity * deltaTime;
 

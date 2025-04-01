@@ -42,12 +42,12 @@ public partial struct SpawnerSystem : ISystem
                 ecb.AddComponent(newBoid, new BoidComponent
                 {
                     velocity = velocity,
-                    separationWeight = 1.5f,
+                    separationWeight = 1.0f,
                     alignmentWeight = 1.0f,
                     cohesionWeight = 1.0f,
-                    wanderWeight = 1.0f,
-                    homeAttractionWeight = 1f,
-                    neighborRadius = .5f,
+                    wanderWeight = .5f,
+                    homeAttractionWeight = .1f,
+                    neighborRadius = .3f,
                     maxSpeed = UnityEngine.Random.Range(1, 1.4f)
                 });
 
